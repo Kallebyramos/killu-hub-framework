@@ -2,6 +2,8 @@
 
 A pluggable lakehouse ingestion framework — connect any source, process with Spark or Flink, land in Apache Iceberg following the medallion architecture (Bronze → Silver → Gold).
 
+Can be installed via Pypi → https://pypi.org/project/killuhub/0.1.0/
+
 ---
 
 ## Architecture
