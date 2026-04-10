@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "killuhub"
-version = "0.1.0"
+version = "0.1.1"
 description = "Pluggable data ingestion framework — connectors, Spark/Flink processing, Iceberg storage"
 authors = [
     { name="Kalleby Ramos" }
 ]
 requires-python = ">=3.11"
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 
 # Core dependencies (minimal — heavy deps are optional extras)
 dependencies = [

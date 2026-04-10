@@ -1,2 +1,22 @@
-#venv settings
+# virtual env
 .venv/
+venv/
+
+# python cache
+__pycache__/
+*.pyc
+
+# build artifacts
+build/
+dist/
+*.egg-info/
+
+# test cache
+.pytest_cache/
+
+# type checker
+.mypy_cache/
+
+# editor
+.vscode/
+.idea/

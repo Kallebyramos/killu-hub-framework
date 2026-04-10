@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 killuhub/__init__.py

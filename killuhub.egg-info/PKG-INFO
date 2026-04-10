@@ -1,11 +1,18 @@
 Metadata-Version: 2.4
 Name: killuhub
-Version: 0.1.0
+Version: 0.1.1
 Summary: Pluggable data ingestion framework — connectors, Spark/Flink processing, Iceberg storage
 Author: Kalleby Ramos
-License: MIT
+License: MIT License
+        
+        Copyright (c) 2026 Kalleby Ramos
+        
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction...
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
+License-File: LICENSE
 Requires-Dist: pydantic>=2.0
 Provides-Extra: postgres
 Requires-Dist: psycopg2-binary>=2.9; extra == "postgres"
@@ -33,10 +40,13 @@ Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: pytest-mock>=3.12; extra == "dev"
 Requires-Dist: ruff>=0.4; extra == "dev"
 Requires-Dist: mypy>=1.9; extra == "dev"
+Dynamic: license-file
 
 # KilluHub
 
 A pluggable lakehouse ingestion framework — connect any source, process with Spark or Flink, land in Apache Iceberg following the medallion architecture (Bronze → Silver → Gold).
+
+Can be installed via Pypi → https://pypi.org/project/killuhub/0.1.0/
 
 ---
 
