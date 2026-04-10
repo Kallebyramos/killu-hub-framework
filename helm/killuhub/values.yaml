@@ -1,0 +1,212 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# KilluHub Helm Chart — Universal values interface
+#
+# This single file drives deployment to EKS (Spark Operator), Databricks, or
+# AWS EMR. Set `platform` to the target and fill in only the matching section.
+#
+# Usage:
+#   helm install killuhub-bronze ./helm/killuhub \
+#     -f helm/killuhub/values.yaml \
+#     --set platform=eks \
+#     --set pipeline.bronze.table=prod.bronze.orders
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Target execution platform: eks | databricks | emr
+platform: eks
+
+# ── Pipeline definition ───────────────────────────────────────────────────────
+# Same structure as the YAML files in config/. The chart injects the correct
+# `engine:` block automatically based on `platform`.
+pipeline:
+  # bronze | silver
+  type: bronze
+
+  # batch | streaming
+  # batch    → one-shot job: reads from source, writes to Iceberg, exits
+  # streaming → continuous job: reads live stream, writes per microbatch
+  mode: batch
+
+  # ── Batch config (mode: batch) ────────────────────────────────────────────
+  batch:
+    strategy: incremental        # full | incremental
+    watermark_column: updated_at # cursor column (strategy=incremental only)
+    initial_watermark: "2024-01-01T00:00:00"
+
+  # ── Streaming config (mode: streaming) ───────────────────────────────────
+  streaming:
+    trigger: processingTime      # processingTime | once | availableNow | continuous
+    trigger_interval: "30 seconds"
+    checkpoint_location: "${CHECKPOINT_PATH}"
+    output_mode: append          # append | update | complete
+
+  # Connector — source system
+  connector:
+    name: postgres               # postgres | mysql | kafka | s3 | rest_api
+    config:
+      host: ""
+      port: 5432
+      database: ""
+      user: ""
+      # Password injected at runtime via K8s Secret / Databricks Secret Scope
+      password: "${PG_PASSWORD}"
+      query: >
+        SELECT * FROM orders
+    # For streaming mode with Kafka — Spark readStream options
+    stream_format: kafka
+    stream_options: {}
+    # kafka.bootstrap.servers: "broker:9092"
+    # subscribe: "orders"
+    # startingOffsets: latest
+
+  # Bronze-layer settings (type: bronze)
+  bronze:
+    table: "prod.bronze.orders"
+    source_name: "postgres.shop.orders"
+    partition_by: [_ingestion_date]    # Iceberg partition columns
+
+  # Silver-layer settings (type: silver) — ignored when type: bronze
+  silver:
+    bronze_table: "prod.bronze.orders"
+    silver_table: "prod.silver.orders"
+    key_columns: [order_id]
+    date_columns: [created_at, updated_at]
+    date_dimension_column: created_at
+    type_map:
+      amount: double
+      quantity: int
+    null_check_columns: [order_id, customer_id]
+    partition_by: [created_date]
+    state_store: json            # json | iceberg
+
+  # Data contract validation
+  contract:
+    on_violation: warn           # warn | fail
+    min_row_count: 1
+    columns:
+      - name: order_id
+        type: long
+        nullable: false
+      - name: amount
+        type: double
+        nullable: false
+        min_value: 0
+
+# ── EKS (Spark Operator + Karpenter) ─────────────────────────────────────────
+eks:
+  namespace: data-platform
+  serviceAccountName: killuhub-sa
+  irsaRoleArn: "arn:aws:iam::123456789012:role/killuhub-irsa"
+
+  image: "registry.example.com/killuhub:latest"
+  imagePullPolicy: IfNotPresent
+
+  # Iceberg catalog
+  warehouse: "s3a://my-bucket/warehouse"
+  catalogName: prod
+  catalogType: hadoop            # hadoop | rest
+
+  # REST catalog (Nessie / Polaris) — used when catalogType: rest
+  restCatalogUri: "http://nessie.data-platform.svc:19120/iceberg"
+
+  driver:
+    cores: 1
+    coreLimit: "1200m"
+    memory: "2g"
+    nodePool: spark-driver       # matches Karpenter NodePool label
+
+  executor:
+    cores: 2
+    memory: "4g"
+    instances: 3
+    nodePool: spark-executor
+
+  dynamicAllocation:
+    enabled: true
+    initialExecutors: 1
+    minExecutors: 1
+    maxExecutors: 10
+
+  sparkConf:
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    "spark.sql.shuffle.partitions": "200"
+
+  # Environment variables injected into driver + executor pods
+  env: []
+  # - name: PG_HOST
+  #   valueFrom:
+  #     secretKeyRef:
+  #       name: postgres-secret
+  #       key: host
+
+  # Secret references mounted as envFrom
+  envFrom: []
+  # - secretRef:
+  #     name: killuhub-secrets
+
+# ── Databricks ────────────────────────────────────────────────────────────────
+databricks:
+  warehouse: "s3://my-data-lake/warehouse"
+  catalogName: main
+  unityCatalog: main
+
+  sparkVersion: "14.3.x-scala2.12"
+  nodeTypeId: "i3.xlarge"
+  numWorkers: 4
+
+  autoscale:
+    enabled: true
+    minWorkers: 2
+    maxWorkers: 10
+
+  instanceProfileArn: "arn:aws:iam::123456789012:instance-profile/DatabricksInstanceProfile"
+  spotWithFallback: true
+
+  schedule:
+    enabled: false
+    quartzCronExpression: "0 0 * * * ?"
+    timezoneId: UTC
+
+  maxRetries: 2
+  timeoutSeconds: 3600
+
+  # Extra Spark conf merged into the cluster definition
+  sparkConf:
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+
+  # Environment variables exposed to the cluster (for secret injection)
+  envVars: {}
+  # PG_HOST: "my-postgres-host"
+  # PG_PASSWORD: "{{secrets/killuhub/pg_password}}"
+
+# ── AWS EMR ───────────────────────────────────────────────────────────────────
+emr:
+  warehouse: "s3://my-data-lake/warehouse"
+  catalogName: glue_catalog
+  catalogType: glue
+
+  releaseLabel: "emr-6.15.0"
+  masterInstanceType: "m5.xlarge"
+  coreInstanceType: "r5.2xlarge"
+  coreInstanceCount: 3
+
+  configBucket: "s3://my-bucket/killuhub"
+  # Path where the pipeline YAML is uploaded before the step runs
+  configKey: "configs/pipeline.yaml"
+
+  iamJobFlowRole: "EMR_EC2_DefaultRole"
+  iamServiceRole: "EMR_DefaultRole"
+
+  sparkSubmitArgs: []
+  # - "--conf"
+  # - "spark.executor.memory=4g"
+
+# ── Job metadata ──────────────────────────────────────────────────────────────
+job:
+  name: "killuhub-bronze-orders"
+  labels:
+    team: data-platform
+    layer: bronze
+  emailOnFailure: []
+  # - data-platform@company.com

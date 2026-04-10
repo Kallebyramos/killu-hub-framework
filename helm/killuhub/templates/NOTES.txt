@@ -1,0 +1,64 @@
+KilluHub — {{ .Values.pipeline.type | upper }} pipeline deployed as {{ .Values.platform | upper }}
+Release: {{ .Release.Name }}
+
+{{- if eq .Values.platform "eks" }}
+━━━ EKS (Spark Operator) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SparkApplication submitted to namespace: {{ .Values.eks.namespace }}
+
+Watch progress:
+  kubectl get sparkapplication {{ include "killuhub.fullname" . }} -n {{ .Values.eks.namespace }} -w
+
+Driver logs:
+  kubectl logs -n {{ .Values.eks.namespace }} -l spark-role=driver,app={{ include "killuhub.fullname" . }} -f
+
+Pipeline config mounted at:
+  /etc/killuhub/pipeline.yaml  (inside driver pod)
+
+ConfigMap: {{ include "killuhub.configmapName" . }}
+ServiceAccount: {{ .Values.eks.serviceAccountName }} (IRSA: {{ .Values.eks.irsaRoleArn }})
+{{- end }}
+
+{{- if eq .Values.platform "databricks" }}
+━━━ Databricks (Asset Bundle) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The Databricks bundle YAML has been rendered. Next steps:
+
+1. Upload the rendered pipeline config to DBFS:
+     helm template {{ .Release.Name }} ./helm/killuhub --show-only templates/configmap.yaml \
+       | yq '.data["pipeline.yaml"]' \
+       > /tmp/{{ .Values.job.name }}.yaml
+     databricks fs cp /tmp/{{ .Values.job.name }}.yaml \
+       dbfs:/killuhub/configs/{{ .Values.job.name }}.yaml
+
+2. Deploy and run the bundle:
+     helm template {{ .Release.Name }} ./helm/killuhub --show-only templates/databricks-job.yaml \
+       > databricks-bundle.yaml
+     databricks bundle deploy
+     databricks bundle run killuhub-job
+
+Catalog: {{ .Values.databricks.unityCatalog }} (Unity Catalog)
+Warehouse: {{ .Values.databricks.warehouse }}
+{{- end }}
+
+{{- if eq .Values.platform "emr" }}
+━━━ AWS EMR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The EMR step definition has been rendered. Next steps:
+
+1. Upload the pipeline config to S3:
+     helm template {{ .Release.Name }} ./helm/killuhub --show-only templates/configmap.yaml \
+       | yq '.data["pipeline.yaml"]' \
+       | aws s3 cp - {{ .Values.emr.configBucket }}/{{ .Values.emr.configKey }}
+
+2. Add the step to a running cluster:
+     helm template {{ .Release.Name }} ./helm/killuhub --show-only templates/emr-step.yaml \
+       | head -n <lines before --->) \
+       > emr-step.json
+     aws emr add-steps --cluster-id $CLUSTER_ID --steps file://emr-step.json
+
+   Or start a transient cluster (one-shot):
+     aws emr create-cluster --cli-input-json file://emr-cluster.json
+
+Catalog: {{ .Values.emr.catalogName }} (Glue Data Catalog)
+Warehouse: {{ .Values.emr.warehouse }}
+{{- end }}
+
+Docs: docs/helm/helm.md

@@ -1,0 +1,108 @@
+# KilluHub — Chain pipeline: REST API → Bronze → Silver
+#
+# Ingests orders from a paginated REST API into Bronze,
+# then cleans and deduplicates into Silver — all in one run.
+#
+# The engine block is defined once at the top and shared by both stages.
+# silver.bronze_table is auto-injected from the bronze stage — no repetition.
+#
+# Run:
+#   python main.py --config config/chain_api_orders.yaml
+#
+# Dry-run:
+#   python main.py --config config/chain_api_orders.yaml --dry-run
+
+type: chain
+
+engine:
+  name: spark
+  warehouse: ${WAREHOUSE:-/tmp/killuhub-warehouse}
+  catalog_name: ${CATALOG:-local}
+  catalog_type: hadoop
+
+stages:
+
+  # ── Stage 1: Bronze — ingest raw orders from REST API ─────────────────────
+  - name: bronze-api-orders
+    type: bronze
+    mode: batch
+
+    batch:
+      strategy: incremental
+      watermark_column: created_at
+      initial_watermark: "2024-01-01T00:00:00"
+
+    connector:
+      name: rest_api
+      config:
+        base_url: ${API_BASE_URL:-https://api.example.com}
+        endpoint: /v1/orders
+        auth_type: bearer              # bearer | basic | none
+        token: ${API_TOKEN}
+
+        # Pagination strategy — pick one:
+        pagination: page               # none | page | cursor | offset
+        page_param: page
+        page_size_param: per_page
+        page_size: 100
+
+        # cursor pagination:
+        # pagination: cursor
+        # cursor_param: next_cursor
+        # cursor_path: meta.next_cursor
+
+        # offset pagination:
+        # pagination: offset
+        # offset_param: offset
+        # limit_param: limit
+
+    bronze:
+      table: ${CATALOG:-local}.bronze.api_orders
+      source_name: api.example.orders
+      partition_by: [_ingestion_date]
+
+  # ── Stage 2: Silver — clean and deduplicate bronze orders ─────────────────
+  # bronze_table is auto-injected from the bronze stage above
+  - name: silver-api-orders
+    type: silver
+    mode: batch
+
+    batch:
+      strategy: incremental
+      watermark_column: _ingested_at
+      initial_watermark: "1970-01-01T00:00:00"
+
+    silver:
+      silver_table: ${CATALOG:-local}.silver.api_orders
+
+      key_columns: [order_id]
+
+      date_columns: [created_at, updated_at]
+      date_dimension_column: created_at
+
+      type_map:
+        amount: double
+        quantity: int
+
+      null_check_columns: [order_id, customer_id]
+      drop_columns: [_batch_id]
+      partition_by: [created_date]
+      state_store: json              # json (dev) | iceberg (prod)
+
+    contract:
+      on_violation: fail
+      min_row_count: 0
+      columns:
+        - name: order_id
+          type: long
+          nullable: false
+        - name: amount
+          type: double
+          nullable: false
+          min_value: 0
+        - name: created_at
+          type: timestamp
+          nullable: false
+        - name: created_year
+          type: integer
+          nullable: false

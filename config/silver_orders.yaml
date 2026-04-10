@@ -1,0 +1,89 @@
+# KilluHub — Silver transformation config
+# Source: Bronze Iceberg orders table
+# Target: Silver Iceberg orders table
+#
+# Run:
+#   python main.py --config config/silver_orders.yaml
+
+type: silver
+mode: batch          # silver is always batch (reads from Iceberg Bronze)
+
+batch:
+  strategy: incremental    # full | incremental
+  watermark_column: _ingested_at        # filter on Bronze metadata column
+  initial_watermark: "1970-01-01T00:00:00"
+
+engine:
+  name: spark
+  warehouse: ${WAREHOUSE_PATH:-/tmp/killuhub-warehouse}
+  catalog_name: ${CATALOG_NAME:-local}
+  catalog_type: ${CATALOG_TYPE:-hadoop}
+
+silver:
+  bronze_table: ${CATALOG_NAME:-local}.bronze.orders
+  silver_table: ${CATALOG_NAME:-local}.silver.orders
+
+  # Deduplication — keep latest row per key
+  key_columns: [order_id]
+
+  # Date parsing — convert string columns to TimestampType
+  date_columns: [created_at, updated_at]
+
+  # Derive year/month/day/hour/date dimensions from this timestamp
+  date_dimension_column: created_at
+
+  # Type casting
+  type_map:
+    amount:   double
+    quantity: int
+
+  # Drop Bronze-internal metadata columns from Silver
+  drop_columns: [_batch_id]
+
+  # Drop rows where these key columns are null
+  null_check_columns: [order_id, customer_id]
+
+  # Silver table partition columns (derived by add_date_dimensions)
+  partition_by: [created_date]
+
+  # State store backend: "json" (default, dev) | "iceberg" (prod, durable)
+  state_store: json
+
+# Data contract — validates Silver output before write
+contract:
+  on_violation: fail                    # fail = abort pipeline on violations
+  min_row_count: 0                      # 0 = allow empty incremental batches
+  columns:
+    - name: order_id
+      type: long
+      nullable: false
+
+    - name: customer_id
+      type: long
+      nullable: false
+
+    - name: amount
+      type: double
+      nullable: false
+      min_value: 0
+
+    - name: status
+      type: string
+      nullable: false
+      allowed_values: [pending, paid, shipped, cancelled, refunded]
+
+    - name: created_at
+      type: timestamp
+      nullable: false
+
+    - name: created_year
+      type: integer
+      nullable: false
+
+    - name: created_month
+      type: integer
+      nullable: false
+
+    - name: _processed_at
+      type: timestamp
+      nullable: false

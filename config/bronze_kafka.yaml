@@ -1,0 +1,76 @@
+# KilluHub — Streaming Bronze ingestion from Kafka
+# Source: Kafka user-events topic
+# Target: Iceberg Bronze layer
+#
+# mode: streaming → uses SparkStructuredStreaming (runs continuously)
+# mode: batch     → uses KafkaConnector (reads up to max_records then exits)
+#
+# Run (streaming, continuous):
+#   python main.py --config config/bronze_kafka.yaml
+#
+# Run (batch, one-shot):
+#   python main.py --config config/bronze_kafka.yaml
+#   (change mode to batch below)
+
+type: bronze
+mode: streaming      # batch | streaming
+
+# ── Streaming config (mode: streaming) ───────────────────────────────────────
+streaming:
+  trigger: processingTime        # processingTime | once | availableNow | continuous
+  trigger_interval: "30 seconds" # interval between microbatches
+  checkpoint_location: ${CHECKPOINT_PATH:-/tmp/killuhub-checkpoints/user-events}
+  output_mode: append
+
+# ── Batch fallback config (mode: batch) ──────────────────────────────────────
+# Uncomment and set mode: batch to run as a one-shot batch job
+# batch:
+#   strategy: incremental
+#   watermark_column: event_time
+#   initial_watermark: "2024-01-01T00:00:00"
+
+connector:
+  name: kafka
+  # For streaming mode, Spark reads directly via stream_options below.
+  # For batch mode, the KafkaConnector (confluent-kafka) is used instead.
+  stream_format: kafka
+  stream_options:
+    kafka.bootstrap.servers: ${KAFKA_BROKERS:-localhost:9092}
+    subscribe: ${KAFKA_TOPIC:-user-events}
+    startingOffsets: latest
+    failOnDataLoss: "false"
+  # Batch mode config (used when mode: batch)
+  config:
+    bootstrap_servers: ${KAFKA_BROKERS:-localhost:9092}
+    topic: ${KAFKA_TOPIC:-user-events}
+    group_id: ${KAFKA_GROUP_ID:-killuhub-bronze}
+    auto_offset_reset: earliest
+    max_records: ${KAFKA_MAX_RECORDS:-100000}
+    value_deserializer: json
+
+engine:
+  name: spark
+  warehouse: ${WAREHOUSE_PATH:-/tmp/killuhub-warehouse}
+  catalog_name: ${CATALOG_NAME:-local}
+  catalog_type: ${CATALOG_TYPE:-hadoop}
+
+bronze:
+  table: ${CATALOG_NAME:-local}.bronze.user_events
+  source_name: kafka.user-events
+  partition_by: [_ingestion_date]
+
+contract:
+  on_violation: warn
+  min_row_count: 0
+  columns:
+    - name: event_id
+      type: string
+      nullable: false
+
+    - name: user_id
+      type: long
+      nullable: false
+
+    - name: event_type
+      type: string
+      nullable: false

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "killuhub"
+version = "0.1.0"
+description = "Pluggable data ingestion framework — connectors, Spark/Flink processing, Iceberg storage"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+
+# Core dependencies (minimal — heavy deps are optional extras)
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+# Install only what you need
+postgres  = ["psycopg2-binary>=2.9"]
+kafka     = ["confluent-kafka>=2.3"]
+s3        = ["boto3>=1.34", "pyarrow>=15.0"]
+rest_api  = ["requests>=2.31"]
+spark     = ["pyspark>=3.5"]
+flink     = ["apache-flink>=1.18"]
+iceberg   = ["pyiceberg>=0.6"]
+delta     = ["delta-spark>=3.1"]
+scheduler = ["apscheduler>=3.10"]
+
+# Convenience bundles
+all = [
+    "killuhub[postgres,kafka,s3,rest_api,spark,iceberg,scheduler]"
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["killuhub*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

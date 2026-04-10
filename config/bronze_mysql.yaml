@@ -1,0 +1,60 @@
+# KilluHub — Bronze ingestion from MySQL (local development)
+#
+# Run locally:
+#   python main.py --config config/bronze_mysql.yaml
+#
+# For EKS / Databricks / EMR, use the Helm chart instead:
+#   helm template killuhub-bronze ./helm/killuhub \
+#     --set platform=eks \
+#     --set pipeline.connector.name=mysql \
+#     --set pipeline.connector.config.host=my-mysql-host
+
+type: bronze
+mode: batch          # batch | streaming
+
+batch:
+  strategy: incremental    # full | incremental
+  watermark_column: updated_at
+  initial_watermark: "2024-01-01T00:00:00"
+
+connector:
+  name: mysql
+  config:
+    host: ${MYSQL_HOST}
+    port: ${MYSQL_PORT:-3306}
+    database: ${MYSQL_DATABASE}
+    user: ${MYSQL_USER}
+    password: ${MYSQL_PASSWORD}
+    query: >
+      SELECT order_id, customer_id, amount, quantity, status,
+             created_at, updated_at
+      FROM orders
+    # Optional TLS (uncomment for RDS / managed MySQL with SSL)
+    # ssl_ca: /etc/ssl/certs/ca-bundle.crt
+
+engine:
+  name: spark
+  warehouse: /tmp/killuhub-warehouse
+  catalog_name: local
+  catalog_type: hadoop
+
+bronze:
+  table: local.bronze.orders
+  source_name: mysql.shop.orders
+  partition_by: [_ingestion_date]
+
+contract:
+  on_violation: warn
+  min_row_count: 1
+  columns:
+    - name: order_id
+      type: long
+      nullable: false
+    - name: amount
+      type: double
+      nullable: false
+      min_value: 0
+    - name: status
+      type: string
+      nullable: false
+      allowed_values: [pending, paid, shipped, cancelled, refunded]

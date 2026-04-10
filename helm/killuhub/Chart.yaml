@@ -1,0 +1,24 @@
+apiVersion: v2
+name: killuhub
+description: >
+  KilluHub — environment-agnostic data ingestion framework.
+  Renders deployment artifacts for EKS (Spark Operator), Databricks, or AWS EMR
+  from a single values.yaml interface.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - spark
+  - iceberg
+  - data-platform
+  - bronze
+  - silver
+  - medallion
+
+maintainers:
+  - name: data-platform
+
+annotations:
+  artifacthub.io/changes: |
+    - Initial Helm chart — EKS, Databricks, EMR support

@@ -1,0 +1,58 @@
+{{/*
+RBAC resources for EKS — ServiceAccount, Role, RoleBinding.
+The ServiceAccount carries the IRSA annotation so the driver pod can
+assume an AWS IAM role without hardcoded credentials.
+
+Rendered only when platform is "eks".
+*/}}
+{{- if eq .Values.platform "eks" }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.eks.serviceAccountName }}
+  namespace: {{ .Values.eks.namespace }}
+  labels:
+    {{- include "killuhub.labels" . | nindent 4 }}
+  annotations:
+    # IRSA — links this ServiceAccount to an IAM role via OIDC federation.
+    # The IAM role must trust the EKS OIDC provider and have S3 + Glue permissions.
+    eks.amazonaws.com/role-arn: {{ .Values.eks.irsaRoleArn | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "killuhub.fullname" . }}-spark
+  namespace: {{ .Values.eks.namespace }}
+  labels:
+    {{- include "killuhub.labels" . | nindent 4 }}
+rules:
+  # Spark driver needs to create + watch executor pods
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete, patch]
+  # Driver reads its own ConfigMap for the pipeline YAML
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch]
+  # Driver manages services for executor → driver communication
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, list, watch, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "killuhub.fullname" . }}-spark
+  namespace: {{ .Values.eks.namespace }}
+  labels:
+    {{- include "killuhub.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.eks.serviceAccountName }}
+    namespace: {{ .Values.eks.namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "killuhub.fullname" . }}-spark
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

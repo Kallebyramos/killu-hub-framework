@@ -1,0 +1,132 @@
+{{/*
+SparkApplication CRD — rendered only when platform is "eks".
+Submitted to the cluster via `kubectl apply` or `helm install`.
+Spark Operator picks it up and manages the driver + executor pods.
+*/}}
+{{- if eq .Values.platform "eks" }}
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: {{ include "killuhub.fullname" . }}
+  namespace: {{ .Values.eks.namespace }}
+  labels:
+    {{- include "killuhub.labels" . | nindent 4 }}
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: {{ .Values.eks.image | quote }}
+  imagePullPolicy: {{ .Values.eks.imagePullPolicy | default "IfNotPresent" }}
+
+  mainApplicationFile: "local:///app/main.py"
+  arguments:
+    - "--config"
+    - "/etc/killuhub/pipeline.yaml"
+
+  sparkVersion: "3.5.1"
+
+  # Iceberg JAR is baked into the Docker image at /opt/spark/jars/
+  # No sparkConf for jars.packages needed — avoids Maven egress on private clusters
+  sparkConf:
+    {{- include "killuhub.sparkConf" .Values.eks.sparkConf | nindent 4 }}
+    {{- if eq .Values.eks.catalogType "hadoop" }}
+    "spark.sql.catalog.{{ .Values.eks.catalogName }}": "org.apache.iceberg.spark.SparkCatalog"
+    "spark.sql.catalog.{{ .Values.eks.catalogName }}.type": "hadoop"
+    "spark.sql.catalog.{{ .Values.eks.catalogName }}.warehouse": {{ .Values.eks.warehouse | quote }}
+    {{- else if eq .Values.eks.catalogType "rest" }}
+    "spark.sql.catalog.{{ .Values.eks.catalogName }}": "org.apache.iceberg.spark.SparkCatalog"
+    "spark.sql.catalog.{{ .Values.eks.catalogName }}.type": "rest"
+    "spark.sql.catalog.{{ .Values.eks.catalogName }}.uri": {{ .Values.eks.restCatalogUri | quote }}
+    {{- end }}
+
+  driver:
+    cores: {{ .Values.eks.driver.cores }}
+    coreLimit: {{ .Values.eks.driver.coreLimit | default "1200m" | quote }}
+    memory: {{ .Values.eks.driver.memory | quote }}
+    serviceAccount: {{ .Values.eks.serviceAccountName }}
+
+    labels:
+      {{- include "killuhub.labels" . | nindent 6 }}
+      spark-role: driver
+
+    # Karpenter NodePool targeting
+    nodeSelector:
+      karpenter.sh/nodepool: {{ .Values.eks.driver.nodePool | quote }}
+
+    tolerations:
+      - key: "spark-role"
+        operator: Equal
+        value: "driver"
+        effect: NoSchedule
+
+    # Mount the pipeline YAML ConfigMap
+    configMaps:
+      - name: {{ include "killuhub.configmapName" . }}
+        path: /etc/killuhub
+
+    {{- if .Values.eks.envFrom }}
+    envFrom:
+      {{- .Values.eks.envFrom | toYaml | nindent 6 }}
+    {{- end }}
+
+    {{- if .Values.eks.env }}
+    env:
+      {{- .Values.eks.env | toYaml | nindent 6 }}
+    {{- end }}
+
+  executor:
+    cores: {{ .Values.eks.executor.cores }}
+    memory: {{ .Values.eks.executor.memory | quote }}
+
+    {{- if .Values.eks.dynamicAllocation.enabled }}
+    # instances is ignored when dynamic allocation is on
+    {{- else }}
+    instances: {{ .Values.eks.executor.instances }}
+    {{- end }}
+
+    labels:
+      {{- include "killuhub.labels" . | nindent 6 }}
+      spark-role: executor
+
+    nodeSelector:
+      karpenter.sh/nodepool: {{ .Values.eks.executor.nodePool | quote }}
+
+    tolerations:
+      - key: "spark-role"
+        operator: Equal
+        value: "executor"
+        effect: NoSchedule
+
+    {{- if .Values.eks.envFrom }}
+    envFrom:
+      {{- .Values.eks.envFrom | toYaml | nindent 6 }}
+    {{- end }}
+
+    {{- if .Values.eks.env }}
+    env:
+      {{- .Values.eks.env | toYaml | nindent 6 }}
+    {{- end }}
+
+  {{- if .Values.eks.dynamicAllocation.enabled }}
+  dynamicAllocation:
+    enabled: true
+    initialExecutors: {{ .Values.eks.dynamicAllocation.initialExecutors }}
+    minExecutors: {{ .Values.eks.dynamicAllocation.minExecutors }}
+    maxExecutors: {{ .Values.eks.dynamicAllocation.maxExecutors }}
+    shuffleTrackingTimeout: 300s
+  {{- end }}
+
+  restartPolicy:
+    type: OnFailure
+    onFailureRetries: 2
+    onFailureRetryInterval: 10
+    onSubmissionFailureRetries: 3
+    onSubmissionFailureRetryInterval: 20
+
+  monitoring:
+    exposeDriverMetrics: true
+    exposeExecutorMetrics: true
+    prometheus:
+      jmxExporterJar: "/prometheus/jmx_prometheus_javaagent.jar"
+      port: 8090
+{{- end }}

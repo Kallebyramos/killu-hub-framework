@@ -1,0 +1,71 @@
+# KilluHub — Bronze ingestion config
+# Source: PostgreSQL orders table
+# Target: Iceberg Bronze layer
+#
+# Run:
+#   python main.py --config config/bronze_postgres.yaml
+
+type: bronze
+mode: batch          # batch | streaming
+
+batch:
+  strategy: full           # full | incremental
+  watermark_column: updated_at    # used when strategy=incremental
+  initial_watermark: "2024-01-01T00:00:00"
+
+connector:
+  name: postgres
+  config:
+    host: ${PG_HOST:-localhost}
+    port: ${PG_PORT:-5432}
+    database: ${PG_DATABASE:-shop}
+    user: ${PG_USER:-admin}
+    password: ${PG_PASSWORD}
+    query: >
+      SELECT
+        order_id,
+        customer_id,
+        amount,
+        quantity,
+        status,
+        created_at,
+        updated_at
+      FROM orders
+    batch_size: 10000
+
+engine:
+  name: spark
+  warehouse: ${WAREHOUSE_PATH:-/tmp/killuhub-warehouse}
+  catalog_name: ${CATALOG_NAME:-local}
+  catalog_type: ${CATALOG_TYPE:-hadoop}
+
+bronze:
+  table: ${CATALOG_NAME:-local}.bronze.orders
+  source_name: postgres.shop.orders
+  partition_by: [_ingestion_date]    # Iceberg partition columns
+
+# Data contract — validates raw data from source before writing to Bronze
+contract:
+  on_violation: warn              # warn = log but continue | fail = abort
+  min_row_count: 1
+  columns:
+    - name: order_id
+      type: long
+      nullable: false
+
+    - name: customer_id
+      type: long
+      nullable: false
+
+    - name: amount
+      type: double
+      nullable: false
+      min_value: 0
+
+    - name: status
+      type: string
+      nullable: false
+      allowed_values: [pending, paid, shipped, cancelled, refunded]
+
+    - name: created_at
+      nullable: false
